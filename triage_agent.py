@@ -30,14 +30,14 @@ def run_triage(email: str, conversation_context: Optional[str]) -> Dict[str, Any
     folder = get_session_folder(email)
 
     # Load inputs
-    prelim_path = os.path.join(folder, "prelim_data.json")
+    claim_path = os.path.join(folder, "claim.json")
     attach_path = os.path.join(folder, "attachment_data.json")
 
-    print(f"[run_triage] Loading prelim_data from: {prelim_path}")
-    if not os.path.exists(prelim_path):
-        print(f"[run_triage] ERROR: {prelim_path} not found!")
+    print(f"[run_triage] Loading prelim_data from: {claim_path}")
+    if not os.path.exists(claim_path):
+        print(f"[run_triage] ERROR: {claim_path} not found!")
         raise FileNotFoundError("prelim_data.json not found for " + email)
-    prelim = load_json(prelim_path)
+    prelim = load_json(claim_path)
     print(f"[run_triage] Loaded prelim_data.")
 
     print(f"[run_triage] Loading attachment_data from: {attach_path}")
@@ -52,7 +52,7 @@ def run_triage(email: str, conversation_context: Optional[str]) -> Dict[str, Any
         {
             "type": "text",
             "text": json.dumps({
-                "expanded_incident_description": prelim["expanded_incident_description"],
+                "expanded_incident_description": prelim["incident_description"],
                 "attachment_details": attachments,
                 "conversation_context": conversation_context
             })
@@ -125,7 +125,7 @@ def run_triage(email: str, conversation_context: Optional[str]) -> Dict[str, Any
                 print(f"[run_triage] JSON decode error: {e}")
                 continue  # skip messages that are not valid JSON
 
-    if incident_types or incident_description is None:
+    if incident_types is None or incident_description is None:
         print("[run_triage] ERROR: Triage assistant did not return incident type or incident desctiption")
         raise RuntimeError("Triage assistant did not return incident_type or description")
 

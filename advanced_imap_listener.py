@@ -13,7 +13,7 @@ from utils import (
     save_processed,
     MAX_ATTACHMENT_SIZE
 )
-from ochestration_layer import orchestrate
+from updated_layer import orchestrate
 
 load_dotenv()
 
@@ -44,7 +44,7 @@ def send_email(to: str, subject: str, html: str):
     print(f"[send_email] Email sent to {to}")
 
 
-def poll_inbox(interval=100):
+def poll_inbox(interval=10):
     """Main loop to poll inbox for new messages and route to orchestrator."""
     print("[poll_inbox] Starting inbox polling loop...")
     processed = load_processed()

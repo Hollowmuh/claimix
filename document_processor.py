@@ -153,12 +153,7 @@ def process_and_update_claim_session(sender: str) -> dict:
             file_path = os.path.join(tf, fname)
             ext = os.path.splitext(fname)[1].lower()
             if ext in SUPPORTED_IMAGE_EXTENSIONS:
-                ocr_outputs = process_image(file_path)
-                parsed[fname] = {
-                    "output_a": ocr_outputs.get("output_a", ""),
-                    "output_b": ocr_outputs.get("output_b", ""),
-                    "success": bool(ocr_outputs.get("output_a", "").strip() or ocr_outputs.get("output_b", "").strip())
-                }
+                continue
             elif ext == PDF_EXT:
                 text = extract_text_from_file(file_path)
                 if not text.strip():

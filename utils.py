@@ -6,7 +6,7 @@ from typing import Dict, Any
 PROCESSED_FILE = "processed_emails.json" 
 DOCUMENT_EXTS = {".pdf", ".docx", ".jpg", ".png", ".jpeg", ".txt", ".doc", ".tiff", ".tif"}
 SESSIONS_DIR = "sessions"
-
+MAX_ATTACHMENT_SIZE = 10*1024*1024
 def generate_thread_id(email: str) -> str:
     thread_id = hashlib.md5(email.lower().encode()).hexdigest()[:12]
     print(f"[generate_thread_id] Generated thread ID: {thread_id} for email: {email}")

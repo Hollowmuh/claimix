@@ -152,8 +152,25 @@ def run_clarifying_question(
 
     # 5) save output to prelim_data.json
     folder = get_session_folder(sender_email)
-    out_path = os.path.join(folder, "prelim_data.json")
-    print(f"[run_clarifying_question] Saving result to: {out_path}")
-    with open(out_path, "w", encoding="utf-8") as f:
-        json.dump(result, f, indent=2, ensure_ascii=False)
-    print("[run_clarifying_question] Result saved successfully.")
+    claim_path = os.path.join(folder, "claim.json")
+    print(f"[run_clarifying_question] Updating incident_description in: {claim_path}")    
+    # Load existing claim or initialize new
+    claim = load_json(claim_path) if os.path.exists(claim_path) else {}
+    # Update only the incident description
+    claim["incident_description"] = result["expanded_incident_description"]
+    # Save updated claim.json
+    with open(claim_path, "w", encoding="utf-8") as f:
+        json.dump(claim, f, indent=2, ensure_ascii=False)
+        print("[orchestrate] Saved expanded incident description.")
+    
+    from advanced_imap_listener import send_email
+        # Send clarifying question via email (HTML formatted)
+    subject = "Quick clarification needed to process your claim"
+    html_body = (
+        "<p>Thanks for reporting your incident. Based on the information so far, we need a quick clarification to route your claim appropriately.</p>"
+        "<p><b>Please reply with the following:</b></p>"
+        f"<p>{result['clarifying_question']}</p>"
+    )
+    send_email(to=sender_email, subject=subject, html=html_body)
+    print("[orchestrate] Clarifying question sent via email.")
+    print("[run_clarifying_question] incident_description saved to claim.json")
