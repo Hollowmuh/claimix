@@ -20,8 +20,6 @@ sessions/
 attachments/
 assistants_schema/
 
-ochestration_layer.py
-updated_layer.py
 processed_emails.json
 *.eml
 
