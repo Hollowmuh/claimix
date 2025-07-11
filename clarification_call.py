@@ -15,27 +15,21 @@ SESSIONS_DIR = "sessions"
 CLARIFY_SCHEMA = {
   "type": "object",
   "properties": {
-    "expanded_incident_description": {
-      "type": "string",
-      "description": "A faithful, detailed restatement of everything the user said or that OCR and attachment details revealed."
-    },
     "clarifying_question": {
       "type": "string",
       "description": "A single open‑ended question asking for the most critical missing context."
     }
   },
-  "required": ["expanded_incident_description", "clarifying_question"],
+  "required": [ "clarifying_question"],
   "additionalProperties": False
 }
 
 CLARIFY_INSTRUCTION =''' 
 You are the Clarifying Question Assistant for an automotive insurance claim system. Your role is to analyze the user's initial message describing an incident involving their vehicle, as well as structured "attachment details". You will use this information to help prepare the claim for routing to specialist assistants by filling in missing information that the user has not yet provided.
 
-You must perform **two specific actions only**:
+You must perform **a specific action only**:
 
-1. expanded_incident_description: Faithfully restate what the user has already reported. Use their own language wherever possible, and supplement it with concise summaries of the attachment “details.” Do not invent or assume anything not explicitly stated. This should read as a brief, coherent narrative that includes all currently known facts.
-
-2. clarifying_question: Based on what is known, identify the **most likely one or more categories of incident** (see assistant types below), and generate **a single, well-structured follow-up prompt** that elicits any critical missing information. The question may include multiple sub-parts if needed but should flow naturally and remain focused.
+1. clarifying_question: Based on what is known, identify the **most likely one or more categories of incident** (see assistant types below), and generate **well-structured follow-up prompt** that elicits any critical missing information. The question may include multiple sub-parts if needed but should flow naturally and remain focused.
 
 You may phrase this as:
   “To help us fully understand the situation and route your claim correctly, could you please clarify: [detailed, open-ended clarification based on likely incident types]”
@@ -80,8 +74,7 @@ You are expected to understand the following module structure so you can tailor 
 3. Think: What modules are *probably* relevant?
 4. Ask for any **crucial missing facts** that would help clarify which path the claim should follow.
 5.Always ask for questions in territorial usage, general_exceptions, vehicle_security and administrative
-5. Your output is a single JSON object with two fields:
-   - `expanded_incident_description`: a concise summary of what’s known so far.
+5. Your output is a single JSON object with a field:
    - `clarifying_question`: a professionally written question that seeks missing details and encourages a complete response.
 '''
 
@@ -150,19 +143,6 @@ def run_clarifying_question(
     print("[run_clarifying_question] Received response from OpenAI API.")
     result = json.loads(response.output_text)
     print(f"[run_clarifying_question] Parsed response: {json.dumps(result, indent=2)}")
-
-    # 5) save output to prelim_data.json
-    folder = get_session_folder(sender_email)
-    claim_path = os.path.join(folder, "claim.json")
-    print(f"[run_clarifying_question] Updating incident_description in: {claim_path}")    
-    # Load existing claim or initialize new
-    claim = load_json(claim_path) if os.path.exists(claim_path) else {}
-    # Update only the incident description
-    claim["incident_description"] = result["expanded_incident_description"]
-    # Save updated claim.json
-    with open(claim_path, "w", encoding="utf-8") as f:
-        json.dump(claim, f, indent=2, ensure_ascii=False)
-        print("[orchestrate] Saved expanded incident description.")
     
     from advanced_imap_listener import send_email
         # Send clarifying question via email (HTML formatted)

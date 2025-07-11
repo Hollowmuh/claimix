@@ -10,6 +10,7 @@ from triage_agent import run_triage
 from attachment_details import generate_attachment_details
 from clarification_call import run_clarifying_question
 from utils import load_json, save_json, get_session_folder, load_claim_state, save_claim_state
+from followup_agent import run_follow_up_agent
 
 load_dotenv()
 SESSIONS_DIR = "sessions"
@@ -532,9 +533,11 @@ class Orchestrator:
                     
                     for agent_name in agents_to_run:
                         self.run_agent(email, agent_name)
+                        
 
                 if self.all_agents_complete(email):
-                    claim["stage"] = "COMPLETE"
+                    run_follow_up_agent(email)
+                    claim["stage"] = "FOLLOWUP_REQUESTED"
                     save_claim_state(email, claim)
                     print("[orchestrate] All agents complete - claim processing finished.")
 
