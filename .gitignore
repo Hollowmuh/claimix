@@ -21,6 +21,7 @@ attachments/
 assistants_schema/
 
 processed_emails.json
+updated_layer.py
 *.eml
 
 # OS or IDE files

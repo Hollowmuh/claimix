@@ -35,7 +35,7 @@ FOLLOW_UP_FILE = "follow_up.json"
 ATTACHMENT_DATA_FILE = "attachment_data.json"
 DECISIONS_FILE ="decisions.json"
 
-# Map incident types to their corresponding agents
+# FIXED: Corrected typo in administrative assistant naming
 INCIDENT_TYPE_TO_AGENT = {
     # MODULE 1 – Physical Loss & Damage
     "accidental_and_glass_damage": "accidental_and_glass_assistant",
@@ -58,10 +58,10 @@ INCIDENT_TYPE_TO_AGENT = {
     "territorial_usage": "territorial_and_usage_assistant",
     "general_exceptions": "general_exceptions_assistant",
     "vehicle_security": "vehicle_security_assistant",
-    "administrative": "adminstrative_assistant"
+    "administrative": "administrative_assistant"  # FIXED: Corrected typo
 }
 
-# Assistant IDs for each agent - replace with your actual assistant IDs
+# FIXED: Corrected typo in administrative assistant ID
 ASSISTANT_IDS = {
     # MODULE 1 – Physical Loss & Damage
     "accidental_and_glass_assistant": os.getenv("ACCIDENTAL_AND_GLASS_ASSISTANT_ID"),
@@ -84,8 +84,9 @@ ASSISTANT_IDS = {
     "territorial_and_usage_assistant": os.getenv("TERRITORIAL_AND_USAGE_ASSISTANT_ID"),
     "general_exceptions_assistant": os.getenv("GENERAL_EXCEPTIONS_ASSISTANT_ID"),
     "vehicle_security_assistant": os.getenv("VEHICLE_SECURITY_ASSISTANT_ID"),
-    "adminstrative_assistant": os.getenv("ADMINISTRATIVE_ASSISTANT_ID"),
+    "administrative_assistant": os.getenv("ADMINISTRATIVE_ASSISTANT_ID"),  # FIXED: Corrected typo
 }
+
 DECISION_ENGINE = {
     "third_party_injury_assistant": evaluate_bodily_injury_fatality_claim,
     "accidental_and_glass_assistant": evaluate_accidental_damage_glass_claim,
@@ -101,8 +102,29 @@ DECISION_ENGINE = {
     "territorial_and_usage_assistant": evaluate_territorial_and_usage_claim,
     "general_exceptions_assistant": evaluate_general_exceptions_claim,
     "vehicle_security_assistant": evaluate_security_and_condition_compliance_claim,
-    "adminstrative_assistant": evaluate_admin_and_underwriting_claim,
+    "administrative_assistant": evaluate_admin_and_underwriting_claim,  # FIXED: Corrected typo
 }
+
+# ADDED: State machine for proper claim stage transitions
+class ClaimStage:
+    NEW = "NEW"
+    QUESTIONED = "QUESTIONED"
+    TRIAGED = "TRIAGED"
+    AGENTS_RUNNING = "AGENTS_RUNNING"
+    AGENTS_COMPLETE = "AGENTS_COMPLETE"
+    FOLLOWUP_REQUESTED = "FOLLOWUP_REQUESTED"
+    COMPLETE = "COMPLETE"
+    
+    # Valid transitions - each stage can only move to specific next stages
+    VALID_TRANSITIONS = {
+        NEW: [QUESTIONED],
+        QUESTIONED: [TRIAGED],
+        TRIAGED: [AGENTS_RUNNING],
+        AGENTS_RUNNING: [AGENTS_COMPLETE, AGENTS_RUNNING],  # Can stay in running while agents work
+        AGENTS_COMPLETE: [FOLLOWUP_REQUESTED],
+        FOLLOWUP_REQUESTED: [COMPLETE, TRIAGED],  # Can go back to triaged for new incidents
+        COMPLETE: [TRIAGED]  # Can reopen if new incidents arise
+    }
 
 
 class Orchestrator:
@@ -296,8 +318,9 @@ class Orchestrator:
         follow_up_data["last_updated"] = time.time()
         save_json(follow_up_path, follow_up_data)
     
-    
-    def save_decision(email: str, agent_name: str, decision: Dict):
+    # FIXED: Changed from static method to instance method
+    def save_decision(self, email: str, agent_name: str, decision: Dict):
+        """Save agent decision to decisions.json"""
         folder = get_session_folder(email)
         path = os.path.join(folder, DECISIONS_FILE)
         if os.path.exists(path):
@@ -311,6 +334,52 @@ class Orchestrator:
         })
         save_json(path, all_decisions)
 
+    # ADDED: Method to check if agent has completed and returned a decision
+    def is_agent_complete(self, email: str, agent_name: str) -> bool:
+        """Check if agent has completed by returning a decision"""
+        folder = get_session_folder(email)
+        decisions_path = os.path.join(folder, DECISIONS_FILE)
+        
+        if os.path.exists(decisions_path):
+            decisions = load_json(decisions_path)
+            # Agent is complete if it has a decision recorded
+            return any(d.get("agent") == agent_name for d in decisions)
+        
+        return False
+
+    # ADDED: Method to clean up thread after agent completion
+    def cleanup_agent_thread(self, email: str, agent_name: str):
+        """Clean up OpenAI thread after agent completion"""
+        try:
+            claim = self.get_claim(email)
+            agent_threads = claim.get("agent_threads", {})
+            
+            if agent_name in agent_threads:
+                thread_id = agent_threads[agent_name]
+                # Note: OpenAI doesn't provide thread deletion, but we can remove from our tracking
+                del agent_threads[agent_name]
+                claim["agent_threads"] = agent_threads
+                save_claim_state(email, claim)
+                print(f"[orchestration] Cleaned up thread tracking for {agent_name}")
+        except Exception as e:
+            print(f"[orchestration] Error cleaning up thread for {agent_name}: {e}")
+
+    # ADDED: Method to handle claim stage transitions safely
+    def transition_claim_stage(self, email: str, new_stage: str) -> bool:
+        """Safely transition claim stage with validation"""
+        claim = self.get_claim(email)
+        current_stage = claim.get("stage", ClaimStage.NEW)
+        
+        # Check if transition is valid
+        if new_stage in ClaimStage.VALID_TRANSITIONS.get(current_stage, []):
+            claim["stage"] = new_stage
+            save_claim_state(email, claim)
+            print(f"[orchestration] Stage transition: {current_stage} -> {new_stage}")
+            return True
+        else:
+            print(f"[orchestration] Invalid stage transition: {current_stage} -> {new_stage}")
+            return False
+
     def init_claim_state(self, email: str):
         """Initialize claim state"""
         folder = get_session_folder(email)
@@ -318,11 +387,12 @@ class Orchestrator:
         
         if not os.path.exists(claim_path):
             default_claim = {
-                "stage": "NEW",
+                "stage": ClaimStage.NEW,  # Use constant instead of string
                 "incident_types": {},
                 "completion_status": "in_progress",
                 "agents_run": [],
-                "agent_threads": {}  # Store thread IDs for each agent
+                "agent_threads": {},  # Store thread IDs for each agent
+                "completed_agents": []  # ADDED: Track agents that have completed with decisions
             }
             save_json(claim_path, default_claim)
 
@@ -374,9 +444,23 @@ class Orchestrator:
         save_claim_state(email, claim)
         
         return thread.id
+    # Add these methods to your Orchestrator class
 
+    def mark_agent_complete(self, email: str, agent_name: str):
+        """Mark an agent as completed with a decision"""
+        claim = self.get_claim(email)
+        completed_agents = claim.get("completed_agents", [])
+        
+        if agent_name not in completed_agents:
+            completed_agents.append(agent_name)
+            claim["completed_agents"] = completed_agents
+            save_claim_state(email, claim)
+            print(f"[orchestration] Marked {agent_name} as complete")
+
+
+    
     def run_assistant_agent(self, email: str, agent_name: str) -> bool:
-        """Run assistant agent with comprehensive context"""
+        """Run assistant agent - they can either ask questions OR make decisions"""
         if agent_name not in self.assistant_ids:
             print(f"[orchestration] No assistant ID found for agent: {agent_name}")
             return False
@@ -412,13 +496,9 @@ class Orchestrator:
                     run_id=run.id
                 )
             
-            # Handle requires_action status (when assistant tries to call functions)
-            # in your Orchestrator class, inside run_assistant_agent, replace the requires_action block with this:
-
-            # …
-            # after detecting run.status == 'requires_action':
+            # Handle requires_action status (when assistant makes a decision)
             if run.status == "requires_action":
-                print(f"[orchestration] {agent_name} invoked a function call – extracting payload")
+                print(f"[orchestration] {agent_name} making decision - extracting payload")
                 
                 # Get the required action details
                 required_action = run.required_action
@@ -430,14 +510,18 @@ class Orchestrator:
                         func_name = tool_call.function.name
                         args = json.loads(tool_call.function.arguments)
                         
-                        print(f"[orchestration] Function called: {func_name} with args: {args}")
+                        print(f"[orchestration] Decision function called: {func_name} with args: {args}")
                         
                         # Route to the local decision engine
                         if agent_name in DECISION_ENGINE:
                             decision = DECISION_ENGINE[agent_name](args)
                             print(f"[orchestration] {agent_name} decision: {decision}")
-                            # Save globally
-                            Orchestrator.save_decision(email, agent_name, decision)
+                            self.save_decision(email, agent_name, decision)
+                            
+                            # Mark agent as completed
+                            self.mark_agent_complete(email, agent_name)
+                            self.cleanup_agent_thread(email, agent_name)
+                            
                         else:
                             print(f"[orchestration] No DECISION_ENGINE handler for {agent_name}")
                             decision = {"decision": "pending", "reason": "No engine configured"}
@@ -464,8 +548,6 @@ class Orchestrator:
                     print(f"[orchestration] Unexpected required_action type for {agent_name}")
                     self.client.beta.threads.runs.cancel(thread_id=thread_id, run_id=run.id)
                     return False
-                        # … continue with your existing handling of 'completed' status
-
                         
             if run.status == 'completed':
                 # Get the response
@@ -493,9 +575,9 @@ class Orchestrator:
                             self.save_follow_up(email, agent_name, response_content)
                             print(f"[orchestration] {agent_name} returned message (JSON parse failed)")
                     else:
-                        # Save as follow-up message
+                        # Save as follow-up message (could be questions)
                         self.save_follow_up(email, agent_name, response_content)
-                        print(f"[orchestration] {agent_name} returned conversational message")
+                        print(f"[orchestration] {agent_name} returned conversational message (possibly questions)")
                     
                     return True
                 else:
@@ -508,11 +590,14 @@ class Orchestrator:
         except Exception as e:
             print(f"[orchestration] Error running assistant agent {agent_name}: {e}")
             return False
+
+
+    # IMPROVED: Better logic for determining agents to run
     def get_agents_to_run(self, email: str) -> List[str]:
-        """Get agents to run based on incident_types from triage"""
+        """Get agents to run based on incident_types from triage, excluding completed ones"""
         claim = self.get_claim(email)
         incident_types = claim.get("incident_types", {})
-        agents_already_run = claim.get("agents_run", [])
+        completed_agents = claim.get("completed_agents", [])
         
         agents_to_run = []
         
@@ -520,9 +605,9 @@ class Orchestrator:
         for incident_type in incident_types:
             if incident_type in self.incident_type_to_agent:
                 agent_name = self.incident_type_to_agent[incident_type]
-                # if agent_name not in agents_already_run:
-                # Need to get a seperate logic to figure out agents that have completed gathering information.
-                agents_to_run.append(agent_name)
+                # Only add agent if it hasn't completed yet
+                if agent_name not in completed_agents:
+                    agents_to_run.append(agent_name)
         
         return agents_to_run
 
@@ -540,8 +625,8 @@ class Orchestrator:
                 if triage_result:
                     claim = self.get_claim(email)
                     claim["incident_types"] = triage_result.get("incident_types", {})
-                    claim["stage"] = "TRIAGED"
-                    save_claim_state(email, claim)
+                    # Use proper stage transition
+                    self.transition_claim_stage(email, ClaimStage.TRIAGED)
                     print(f"[orchestration] Triage complete. Incident types: {claim['incident_types']}")
                     return True
                 return False
@@ -551,7 +636,7 @@ class Orchestrator:
                 success = self.run_assistant_agent(email, agent_name)
                 
                 if success:
-                    # Mark agent as run
+                    # Mark agent as run (keep existing functionality)
                     claim = self.get_claim(email)
                     agents_run = claim.get("agents_run", [])
                     if agent_name not in agents_run:
@@ -565,11 +650,11 @@ class Orchestrator:
             print(f"[orchestration] Error running agent {agent_name}: {e}")
             return False
 
+    # IMPROVED: Better logic for checking if all agents are complete
     def all_agents_complete(self, email: str) -> bool:
-        """Check if all required agents based on incident_types are complete"""
+        """Check if all required agents have completed with decisions (not just asked questions)"""
         claim = self.get_claim(email)
         incident_types = claim.get("incident_types", {})
-        agents_run = claim.get("agents_run", [])
         
         # Get all agents that should run based on incident types
         required_agents = []
@@ -577,8 +662,18 @@ class Orchestrator:
             if incident_type in self.incident_type_to_agent:
                 required_agents.append(self.incident_type_to_agent[incident_type])
         
-        # Check if all required agents have been run
-        return all(agent in agents_run for agent in required_agents)
+        # Check if all required agents have decisions recorded
+        folder = get_session_folder(email)
+        decisions_path = os.path.join(folder, DECISIONS_FILE)
+        
+        if not os.path.exists(decisions_path):
+            return False
+            
+        decisions = load_json(decisions_path)
+        agents_with_decisions = [d.get("agent") for d in decisions]
+        
+        # All required agents must have decisions
+        return all(agent in agents_with_decisions for agent in required_agents)
 
     def orchestrate(self, email: str, user_message: str, attachments: List[str]):
         print(f"\n[orchestrate] New message from {email}")
@@ -596,42 +691,170 @@ class Orchestrator:
             self.update_context(email, "", [])  # Empty message, no new attachments
 
         claim = self.get_claim(email)
-        stage = claim.get("stage", "NEW")
+        stage = claim.get("stage", ClaimStage.NEW)
         print(f"[orchestrate] Current claim stage: {stage}")
 
-        # Stage-specific handling
-        if stage == "NEW":
+        # Stage-specific handling with proper transitions
+        if stage == ClaimStage.NEW:
             print("[orchestrate] First message - running clarifying question agent...")
             prelim = run_clarifying_question(email, user_message)
             
-            claim["stage"] = "QUESTIONED"
-            save_claim_state(email, claim)
+            # Use proper stage transition
+            self.transition_claim_stage(email, ClaimStage.QUESTIONED)
 
-        else:
+        elif stage == ClaimStage.QUESTIONED:
             print("[orchestrate] Running triage on new message...")
             triage_success = self.run_agent(email, "triage")
 
             if triage_success:
+                # Transition to agents running stage
+                self.transition_claim_stage(email, ClaimStage.AGENTS_RUNNING)
+                
                 agents_to_run = self.get_agents_to_run(email)
                 if agents_to_run:
                     print(f"[orchestrate] Running agents: {agents_to_run}")
-                    # Add user message to each agent's conversation history before running
+                    
+                    # Run each agent (they will ask questions first, not make decisions yet)
+                    for agent in agents_to_run:
+                        print(f"[orchestrate] Running agent: {agent}")
+                        success = self.run_agent(email, agent)
+                        if not success:
+                            print(f"[orchestrate] Warning: Agent {agent} failed")
+                    # right before you enter the existence check:
+                    follow_up_result = False
+
+                    if os.path.exists(os.path.join(get_session_folder(email), FOLLOW_UP_FILE)):
+                        try:
+                            follow_up_result = run_follow_up_agent(email)
+                            print("[orchestrate] Follow-up agent completed")
+                        except Exception as e:
+                            print(f"[orchestrate] Follow-up agent failed: {e}")
+                            follow_up_result = False
+                    else:
+                        print("[orchestrate] No follow_up.json found; skipping follow‑up")
+
+                    if follow_up_result:
+                        self.transition_claim_stage(email, ClaimStage.FOLLOWUP_REQUESTED)
+                    else:
+                        print("[orchestrate] No follow-up needed - checking for agent completion…")
+                        if self.all_agents_complete(email):
+                            self.transition_claim_stage(email, ClaimStage.AGENTS_COMPLETE)
+                        # otherwise stay in AGENTS_RUNNING
+
+                else:
+                    print("[orchestrate] No agents to run based on triage")
+                    self.transition_claim_stage(email, ClaimStage.COMPLETE)
+
+        elif stage == ClaimStage.AGENTS_RUNNING:
+            print("[orchestrate] Agents currently running...")
+            
+            # Check if user provided new information that might answer pending questions
+            if user_message.strip():
+                print("[orchestrate] New user message - updating agent contexts...")
+                
+                # Get agents that are still running (not completed)
+                agents_to_run = self.get_agents_to_run(email)
+                if agents_to_run:
+                    # Add user message to each agent's context
                     self.add_user_message_to_agents(email, user_message, agents_to_run)
                     
-                    for agent_name in agents_to_run:
-                        self.run_agent(email, agent_name)
-                        
-
+                    # Re-run agents with updated context
+                    for agent in agents_to_run:
+                        print(f"[orchestrate] Re-running agent with new context: {agent}")
+                        success = self.run_agent(email, agent)
+                        if not success:
+                            print(f"[orchestrate] Warning: Agent {agent} failed")
+                
+                # After agents process new info, run follow-up to see if more questions needed
+                print("[orchestrate] Running follow-up agent to check for additional questions...")
+                follow_up_result = run_follow_up_agent(email)
+                if follow_up_result:
+                    self.transition_claim_stage(email, ClaimStage.FOLLOWUP_REQUESTED)
+                else:
+                    # No more questions - check if agents are complete
+                    if self.all_agents_complete(email):
+                        self.transition_claim_stage(email, ClaimStage.AGENTS_COMPLETE)
+            else:
+                # No new message, just check completion status
                 if self.all_agents_complete(email):
-                    run_follow_up_agent(email)
-                    # claim["stage"] = "FOLLOWUP_REQUESTED"
-                    # save_claim_state(email, claim)
-                    print("[orchestrate] All agents complete - claim processing finished.")
+                    print("[orchestrate] All agents complete")
+                    self.transition_claim_stage(email, ClaimStage.AGENTS_COMPLETE)
 
-        print("[orchestrate] Orchestration complete.")
+        elif stage == ClaimStage.AGENTS_COMPLETE:
+            print("[orchestrate] All agents have completed - claim processing finished")
+            self.transition_claim_stage(email, ClaimStage.COMPLETE)
+
+        elif stage == ClaimStage.FOLLOWUP_REQUESTED:
+            print("[orchestrate] Follow-up questions were asked - processing user response...")
+            
+            if user_message.strip():
+                # User provided response to questions
+                # Get agents that are still running (not completed)
+                agents_to_run = self.get_agents_to_run(email)
+                if agents_to_run:
+                    # Add user response to each agent's context
+                    self.add_user_message_to_agents(email, user_message, agents_to_run)
+                    
+                    # Re-run agents with user's answers
+                    for agent in agents_to_run:
+                        print(f"[orchestrate] Re-running agent with user response: {agent}")
+                        success = self.run_agent(email, agent)
+                        if not success:
+                            print(f"[orchestrate] Warning: Agent {agent} failed")
+                
+                # After processing user response, check if more questions needed
+                print("[orchestrate] Running follow-up agent to check for additional questions...")
+                follow_up_result = run_follow_up_agent(email)
+                if follow_up_result:
+                    # More questions needed - stay in FOLLOWUP_REQUESTED
+                    print("[orchestrate] Additional questions needed - staying in follow-up stage")
+                else:
+                    # No more questions - transition back to agents running to check completion
+                    print("[orchestrate] No more questions - checking agent completion...")
+                    if self.all_agents_complete(email):
+                        self.transition_claim_stage(email, ClaimStage.AGENTS_COMPLETE)
+                    else:
+                        self.transition_claim_stage(email, ClaimStage.AGENTS_RUNNING)
+            else:
+                # No user response yet - stay in FOLLOWUP_REQUESTED
+                print("[orchestrate] Waiting for user response to follow-up questions")
+
+        elif stage == ClaimStage.COMPLETE:
+            print("[orchestrate] Claim complete - checking for reopening...")
+            
+            # Re-run triage to see if claim should be reopened
+            triage_success = self.run_agent(email, "triage")
+            
+            if triage_success:
+                agents_to_run = self.get_agents_to_run(email)
+                if agents_to_run:
+                    print(f"[orchestrate] Reopening claim - running agents: {agents_to_run}")
+                    # Transition back to agents running
+                    self.transition_claim_stage(email, ClaimStage.AGENTS_RUNNING)
+                    
+                    # Run each agent
+                    for agent in agents_to_run:
+                        print(f"[orchestrate] Running agent: {agent}")
+                        success = self.run_agent(email, agent)
+                        if not success:
+                            print(f"[orchestrate] Warning: Agent {agent} failed")
+                    
+                    # Run follow-up after agents have run
+                    print("[orchestrate] Running follow-up agent for reopened claim...")
+                    follow_up_result = run_follow_up_agent(email)
+                    if follow_up_result:
+                        self.transition_claim_stage(email, ClaimStage.FOLLOWUP_REQUESTED)
+                else:
+                    print("[orchestrate] No new incidents - claim remains complete")
+
+        else:
+            print(f"[orchestrate] Unknown stage: {stage}")
+            # Reset to NEW stage if unknown
+            self.transition_claim_stage(email, ClaimStage.NEW)
+
+        print(f"[orchestrate] Orchestration complete for {email}")
 
 
-# Create global orchestrator instance
 orchestrator = Orchestrator()
 
 # Export the main function for backward compatibility

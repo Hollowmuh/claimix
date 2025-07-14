@@ -154,4 +154,3 @@ def run_clarifying_question(
     )
     send_email(to=sender_email, subject=subject, html=html_body)
     print("[orchestrate] Clarifying question sent via email.")
-    print("[run_clarifying_question] incident_description saved to claim.json")

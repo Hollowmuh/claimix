@@ -130,9 +130,12 @@ def run_follow_up_agent(email: str) -> Dict:
     print("[follow_up] Follow-up email sent.")
 
     # Reset follow_up.json
-    save_json(follow_up_input_path, {
-        "specialist_outputs": {}
-    })
+        # Reset follow_up.json
+    if os.path.exists(follow_up_input_path):
+        os.remove(follow_up_input_path)
+    if os.path.exists(follow_up_email_path):
+        os.remove(follow_up_email_path)
+    print("[follow_up] follow_up.json has been removed.")
     print("[follow_up] follow_up.json has been reset.")
 
     return result
